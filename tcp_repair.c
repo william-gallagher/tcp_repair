@@ -400,16 +400,54 @@ int accept_conn(int sock_listen)
     return sock_new;
 }
 
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <sys/file.h>
+
+void set_lock(int fd)
+{
+    flock(fd, LOCK_EX);
+}
+
+void release_lock(int fd)
+{
+    flock(fd, LOCK_UN);
+}
+
 
 //Add checks for recv Qs
-
 void * send_func(void *args)
 {
     char *src_file = (char *) args;
     int sock_listen;
     int sock_send;
 
-    pthread_mutex_lock(&lock);
+    pthread_t self = pthread_self();
+
+    // a little testing with flock
+    int r = open("/tmp/lock_file", O_CREAT | O_EXCL, O_RDONLY);
+    if (r == -1) {
+        printf("Thread ID [%lu] could not open the lock file!\n", self);
+        if (errno == EEXIST) {
+            printf("Thread ID [%lu] File already exists\n", self);
+            r = open("/tmp/lock_file", O_RDONLY);
+            if (r == -1){
+                printf("Thread ID [%lu] Could not open the lock file in regular mode\n", self);
+            }
+        }
+        else {
+            printf("%s\n", strerror(errno));
+        }
+    }
+    else {
+        printf("Thread ID [%lu] Success in opening the file\n", self);
+    }
+
+    printf("thread ID [%lu], fd = %d\n", self, r);
+
+    //pthread_mutex_lock(&lock);
+    set_lock(r);
     if (!conn_data.initialized) {
 
         sock_listen = create_sock_listen(PORT);
@@ -436,17 +474,20 @@ void * send_func(void *args)
 
         conn_data.initialized = true;
     }
-    pthread_mutex_unlock(&lock);
+    //pthread_mutex_unlock(&lock);
+    release_lock(r);
 
     while (1) {
-        pthread_mutex_lock(&lock);
+        //pthread_mutex_lock(&lock);
+        set_lock(r);
         if (conn_data.done) {
             pthread_exit(NULL);
         }
 
         int sock_send = restore_conn_state();
         if (sock_send < 0) {
-            pthread_mutex_unlock(&lock);
+            //pthread_mutex_unlock(&lock);
+            release_lock(r);
             pthread_exit(NULL);
         }
         char send_buf[100];
@@ -463,13 +504,15 @@ void * send_func(void *args)
                 fclose(conn_data.read_fd);
                 close(sock_send);
                 conn_data.done = true;
-                pthread_mutex_unlock(&lock);
+                //pthread_mutex_unlock(&lock);
+                release_lock(r);
                 pthread_exit(NULL);
             }
         }
 
         save_conn_state(sock_send);
-        pthread_mutex_unlock(&lock);
+        //pthread_mutex_unlock(&lock);
+        release_lock(r);
         // Quick sleep to allow other thread to grab the lock...
         usleep(10);
     }
