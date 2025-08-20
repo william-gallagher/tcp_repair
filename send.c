@@ -28,13 +28,11 @@
 #define PORT 7777
 #define FILE_SZ 100000
 
-pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
 
 typedef struct {
     bool initialized;
     bool done;
     int repair_cnt;
-    FILE *read_fd;
     int sent_bytes;
 
     // TCP connection state
@@ -77,7 +75,9 @@ bool set_lock(int fd)
         print_error("flock()");
         return false;
     }
-    printf("setting lock: PID [%u], fd = %d\n", getpid(), fd);
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    printf("setting lock: PID [%u], fd = %d, %lu\n", getpid(), fd, ts.tv_sec);
     return true;
 }
 
@@ -89,76 +89,12 @@ bool release_lock(int fd)
         return false;
     }
 
-    printf("releasing lock: PID [%u], fd = %d\n", getpid(), fd);
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    printf("releasing lock: PID [%u], fd = %d, %lu\n", getpid(), fd, ts.tv_sec);
     return true;
 }
 
-// TCP client side and file receiver
-void * recv_func(void *args)
-{
-    char *dst_file = (char *) args;
-
-    // create the socket
-    int recv_sock = socket(AF_INET, SOCK_STREAM, 0);
-    if (recv_sock < 0) {
-        print_error("socket()");
-        pthread_exit(NULL);
-    }
-
-    // allow reuse
-    int opt = 1;
-    int rc = setsockopt(recv_sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
-    if (rc < 0) {
-        print_error("setsockopt()");
-        pthread_exit(NULL);
-    }
-
-    // Connect out
-    struct sockaddr_in s_in;
-    memset(&s_in, 0, sizeof(s_in));
-    s_in.sin_addr.s_addr = inet_addr(IP_ADR_STR);
-    s_in.sin_family = AF_INET;
-    s_in.sin_port = htobe16(PORT);
-
-    // Spin until connect is successful
-    while (1) {
-        rc = connect(recv_sock, (struct sockaddr *) &s_in, sizeof(s_in));
-        if (rc < 0) {
-            if (errno != ECONNREFUSED) {
-                print_error("connect()");
-                pthread_exit(NULL);
-            }
-        } else {
-            // Connected Successfully
-            break;
-        }
-    }
-
-    FILE *write_fp = fopen(dst_file, "w");
-    if (!write_fp) {
-        print_error("fopen()")
-        pthread_exit(NULL);
-    }
-
-    char recv_buf[100];
-
-    // Read off socket and write to file
-    while (1) {
-        ssize_t bytes = read(recv_sock, recv_buf, sizeof(recv_buf));
-        if (bytes < 0) {
-            print_error("read()");
-            pthread_exit(NULL);
-        } else if (bytes == 0) {
-            break;
-        } else {
-            fwrite(recv_buf, 1, bytes, write_fp);
-        }
-    }
-
-    fclose(write_fp);
-    close(recv_sock);
-    pthread_exit(NULL);
-}
 
 bool save_conn_state(int recv_fd, int lock_fd)
 {
@@ -394,6 +330,8 @@ int restore_conn_state(int lock_fd)
         return -1;
     }
 
+
+
     printf("\nCreated new socket and restored the connection state!\n");
     printf("\tPID: %u\n", getpid());
     printf("\tTotal bytes sent so far: %d\n", conn_data.sent_bytes);
@@ -473,7 +411,6 @@ void * send_func(void *args)
     int sock_listen;
     int sock_send;
 
-    pthread_t self = pthread_self();
 
     // a little testing with flock
     int r = open(LOCKFILE, O_CREAT | O_EXCL | O_RDWR, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
@@ -493,34 +430,29 @@ void * send_func(void *args)
     printf("PID [%u], fd = %d\n", getpid(), r2);
 
 
-        conn_data.read_fd = fopen(src_file, "r");
-        if (!conn_data.read_fd) {
+        FILE *read_fd = fopen(src_file, "r");
+        if (!read_fd) {
             printf("debug 3\n");
-            pthread_mutex_unlock(&lock);
         }
 
 
-    //pthread_mutex_lock(&lock);
     set_lock(r2);
     off_t fsize = lseek(r2, 0, SEEK_END);
     if (fsize == 0) {
 
         sock_listen = create_sock_listen(PORT);
         if (sock_listen < 0) {
-            pthread_mutex_unlock(&lock);
             pthread_exit(NULL);
         }
 
         sock_send = accept_conn(sock_listen);
         if (sock_send < 0) {
             printf("debug 1\n");
-            pthread_mutex_unlock(&lock);
             pthread_exit(NULL);
         }
 
         if (!save_conn_state(sock_send, r2)) {
             printf("debug 2\n");
-            pthread_mutex_unlock(&lock);
             pthread_exit(NULL);
         }
 
@@ -529,11 +461,9 @@ void * send_func(void *args)
     } else {
         printf("conn data already intied\n");
     }
-    //pthread_mutex_unlock(&lock);
     release_lock(r2);
 
     while (1) {
-        //pthread_mutex_lock(&lock);
         set_lock(r2);
         if (conn_data.done) {
             pthread_exit(NULL);
@@ -541,139 +471,49 @@ void * send_func(void *args)
 
         int sock_send = restore_conn_state(r2);
         if (sock_send < 0) {
-            //pthread_mutex_unlock(&lock);
             release_lock(r2);
             pthread_exit(NULL);
         }
         char send_buf[100];
 
+        // seek to the current offset of the file
+        fseek(read_fd, conn_data.sent_bytes, SEEK_SET);
+
+
         // Send between 0 and 49 chunks of data
         int send_chunks = rand() % 50;
 
         for (int i = 0; i < send_chunks; i++) {
-            size_t bytes = fread(send_buf, 1, sizeof(send_buf), conn_data.read_fd);
+            size_t bytes = fread(send_buf, 1, sizeof(send_buf), read_fd);
             write(sock_send, send_buf, bytes);
+            printf("writing %lu bytes to socket\n", bytes);
             conn_data.sent_bytes += bytes;
 
-            if (feof(conn_data.read_fd)) {
-                fclose(conn_data.read_fd);
+            if (feof(read_fd)) {
+                fclose(read_fd);
                 close(sock_send);
                 conn_data.done = true;
-                //pthread_mutex_unlock(&lock);
                 release_lock(r2);
                 pthread_exit(NULL);
             }
         }
 
         save_conn_state(sock_send, r2);
-        //pthread_mutex_unlock(&lock);
         release_lock(r2);
         // Quick sleep to allow other thread to grab the lock...
         usleep(10);
     }
 }
 
-// Compares the contents of two files
-bool diff_files(char *file1, char *file2)
-{
-    FILE *fd1 = fopen(file1, "r");
-    if (!fd1) {
-        return false;
-    }
-
-    FILE *fd2 = fopen(file2, "r");
-    if (!fd2) {
-        return false;
-    }
-
-    int rc = fseek(fd1, 0, SEEK_END);
-    if (rc < 0) {
-        print_error("fseek()");
-        return false;
-    }
-    long size1 = ftell(fd1);
-    if (size1 < 0) {
-        print_error("ftell()");
-        return false;
-    }
-
-    rc = fseek(fd2, 0, SEEK_END);
-    if (rc < 0) {
-        print_error("fseek()");
-        return false;
-    }
-    long size2 = ftell(fd2);
-    if (size2 < 0) {
-        print_error("ftell()");
-        return false;
-    }
-
-    if (size1 != size2) {
-        return false;
-    }
-
-    rewind(fd1);
-    rewind(fd2);
-
-    char *buf1 = malloc(size1);
-    char *buf2 = malloc(size2);
-
-    fread(buf1, 1, size1, fd1);
-    fread(buf2, 1, size2, fd2);
-
-    rc = memcmp(buf1, buf2, size1);
-
-    free(buf1);
-    free(buf2);
-    fclose(fd1);
-    fclose(fd2);
-
-    if (rc == 0) {
-        return true;
-    }
-    return false;
-}
-
-bool create_file(char *file_name, size_t file_size)
-{
-    srand(time(NULL));
-
-    char *buffer = malloc(file_size);
-    if (!buffer) {
-        print_error("malloc()");
-        return false;
-    }
-
-    for (size_t i = 0; i < file_size; i++) {
-        buffer[i] = rand() % 26 + 'a';
-    }
-
-    FILE *fp = fopen(file_name, "w");
-    if (!fp) {
-        print_error("fopen()");
-        return false;
-    }
-
-    size_t bytes_written = fwrite(buffer, 1, file_size, fp);
-    if (bytes_written != file_size) {
-        print_error("fwrite()");
-        return false;
-    }
-
-    free(buffer);
-    fclose(fp);
-    return true;
-}
-
 int main()
 {
     char *src_file = "source.txt";
 
-    memset(&conn_data, 0, sizeof(conn_data));
+    //memset(&conn_data, 0, sizeof(conn_data));
 
-    if (!create_file(src_file, FILE_SZ)) {
-        return 0;
-    }
+   //if (!create_file(src_file, FILE_SZ)) {
+   //     return 0;
+   // }
 
     pthread_t send;
     int rc = pthread_create(&send, NULL, send_func, src_file);
@@ -688,6 +528,5 @@ int main()
         return 0;
     }
 
-    printf("Number of different sending sockets: %d\n", conn_data.repair_cnt);
     return 0;
 }
