@@ -2,6 +2,7 @@
 // is being swapped back and forth between the two threads...
 
 
+#include "tcp_repair.h"
 #include <stdlib.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -11,30 +12,11 @@
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <errno.h>
-#include <unistd.h>
 #include <netinet/tcp.h>
-#include <pthread.h>
 #include <stdbool.h>
-
-#define IP_ADR_STR "127.0.0.1"
-#define PORT 7777
-#define FILE_SZ 100000
-
-#define print_error(operation) {                             \
-    char err_buf[100] = {0};                                 \
-    strerror_r(errno, err_buf, sizeof(err_buf));             \
-    printf("ERROR in %s: [%s] in function %s at line %d\n",  \
-           operation,                                        \
-           err_buf,                                          \
-          __func__,                                          \
-          __LINE__);                                         \
-};
-
-#include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <sys/file.h>
-
 
 // TCP client side and file receiver
 void recv_func(void *args)

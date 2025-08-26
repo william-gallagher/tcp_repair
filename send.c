@@ -1,15 +1,4 @@
-// Some basic code to exercise TCP repair
-//
-// Create 3 threads.
-// Threads 1 and 2 alternate operation by sending chunks of a file to thread 3.
-// Threads 1 and 2 pass the connection state between them. Each time they
-// operate, they create a new socket and use TCP repair mode to update the
-// socket state.
-//
-// Thread 3, the receiver has no knowledge that the other side of the connection
-// is being swapped back and forth between the two threads...
-
-
+#include "tcp_repair.h"
 #include <stdlib.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -19,15 +8,12 @@
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <errno.h>
-#include <unistd.h>
 #include <netinet/tcp.h>
-#include <pthread.h>
 #include <stdbool.h>
-
-#define IP_ADR_STR "127.0.0.1"
-#define PORT 7777
-#define FILE_SZ 100000
-
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <sys/file.h>
+#include <time.h>
 
 typedef struct {
     bool initialized;
@@ -50,21 +36,6 @@ typedef struct {
 } conn_data_t;
 
 conn_data_t conn_data;
-
-#define print_error(operation) {                             \
-    char err_buf[100] = {0};                                 \
-    strerror_r(errno, err_buf, sizeof(err_buf));             \
-    printf("ERROR in %s: [%s] in function %s at line %d\n",  \
-           operation,                                        \
-           err_buf,                                          \
-          __func__,                                          \
-          __LINE__);                                         \
-};
-
-#include <sys/types.h>
-#include <sys/stat.h>
-#include <fcntl.h>
-#include <sys/file.h>
 
 #define LOCKFILE "/tmp/lock_file"
 
@@ -401,36 +372,34 @@ int accept_conn(int sock_listen)
 }
 
 //Add checks for recv Qs
-void * send_func(void *args)
+void send_func(void *args)
 {
     char *src_file = (char *) args;
     int sock_listen;
     int sock_send;
-
 
     // a little testing with flock
     int r = open(LOCKFILE, O_CREAT | O_EXCL | O_RDWR, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
     if (r == -1) {
         if (errno != EEXIST) {
             print_error("open");
-            pthread_exit(NULL);
+            return;
         }
     }
 
     int r2 = open(LOCKFILE, O_RDWR, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
     if (r2 == -1) {
         print_error("regular open");
-        pthread_exit(NULL);
+        return;
     }
 
     printf("PID [%u], fd = %d\n", getpid(), r2);
 
 
-        FILE *read_fd = fopen(src_file, "r");
-        if (!read_fd) {
-            printf("debug 3\n");
-        }
-
+    FILE *read_fd = fopen(src_file, "r");
+    if (!read_fd) {
+        printf("debug 3\n");
+    }
 
     set_lock(r2);
     off_t fsize = lseek(r2, 0, SEEK_END);
@@ -438,18 +407,18 @@ void * send_func(void *args)
 
         sock_listen = create_sock_listen(PORT);
         if (sock_listen < 0) {
-            pthread_exit(NULL);
+            return;
         }
 
         sock_send = accept_conn(sock_listen);
         if (sock_send < 0) {
             printf("debug 1\n");
-            pthread_exit(NULL);
+            return;
         }
 
         if (!save_conn_state(sock_send, r2)) {
             printf("debug 2\n");
-            pthread_exit(NULL);
+            return;
         }
 
 
@@ -462,13 +431,13 @@ void * send_func(void *args)
     while (1) {
         set_lock(r2);
         if (conn_data.done) {
-            pthread_exit(NULL);
+            return;
         }
 
         int sock_send = restore_conn_state(r2);
         if (sock_send < 0) {
             release_lock(r2);
-            pthread_exit(NULL);
+            return;
         }
         char send_buf[100];
 
@@ -490,7 +459,7 @@ void * send_func(void *args)
                 close(sock_send);
                 conn_data.done = true;
                 release_lock(r2);
-                pthread_exit(NULL);
+                return;
             }
         }
 
@@ -505,20 +474,6 @@ int main()
 {
     char *src_file = "source.txt";
     send_func(src_file);
-
-    
-    //pthread_t send;
-    //int rc = pthread_create(&send, NULL, send_func, src_file);
-    //if (rc != 0) {
-    //    print_error("pthread_create");
-    //    return 0;
-    //}
-
-    //rc = pthread_join(send, NULL);
-    //if (rc != 0) {
-    //    print_error("pthread_join(): send thread");
-    //    return 0;
-    //}
 
     return 0;
 }

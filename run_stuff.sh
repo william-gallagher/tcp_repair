@@ -1,5 +1,5 @@
-gcc -g -o send -pthread send.c
-gcc -g -o receive -pthread receive.c
+gcc -g -o send send.c
+gcc -g -o receive receive.c
 sudo setcap 'cap_net_admin=ep' send 
 
 rm destination.txt
