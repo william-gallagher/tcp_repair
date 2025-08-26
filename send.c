@@ -101,7 +101,6 @@ bool save_conn_state(int recv_fd, int lock_fd)
     // small delay to make sure no traffic is going back and forth on the connection
     usleep(20000);
 
-
     // Put the socket into repair mode
     int opt = 1;
     int rc = setsockopt(recv_fd, SOL_TCP, TCP_REPAIR, &opt, sizeof(opt));
@@ -170,7 +169,7 @@ bool save_conn_state(int recv_fd, int lock_fd)
 
     close(recv_fd);
 
-    //
+    // Go back to the beginning of the file
     rc = lseek(lock_fd, 0, SEEK_SET);
     if (rc == -1) {
         print_error("lseek()");
@@ -178,7 +177,6 @@ bool save_conn_state(int recv_fd, int lock_fd)
     } else if (rc != 0) {
         return false;
     }
-
 
     rc = write(lock_fd, &conn_data, sizeof(conn_data));
     if (rc == -1) {
@@ -329,8 +327,6 @@ int restore_conn_state(int lock_fd)
         print_error("setsockopt()");
         return -1;
     }
-
-
 
     printf("\nCreated new socket and restored the connection state!\n");
     printf("\tPID: %u\n", getpid());
@@ -508,25 +504,21 @@ void * send_func(void *args)
 int main()
 {
     char *src_file = "source.txt";
+    send_func(src_file);
 
-    //memset(&conn_data, 0, sizeof(conn_data));
+    
+    //pthread_t send;
+    //int rc = pthread_create(&send, NULL, send_func, src_file);
+    //if (rc != 0) {
+    //    print_error("pthread_create");
+    //    return 0;
+    //}
 
-   //if (!create_file(src_file, FILE_SZ)) {
-   //     return 0;
-   // }
-
-    pthread_t send;
-    int rc = pthread_create(&send, NULL, send_func, src_file);
-    if (rc != 0) {
-        print_error("pthread_create");
-        return 0;
-    }
-
-    rc = pthread_join(send, NULL);
-    if (rc != 0) {
-        print_error("pthread_join(): send thread");
-        return 0;
-    }
+    //rc = pthread_join(send, NULL);
+    //if (rc != 0) {
+    //    print_error("pthread_join(): send thread");
+    //    return 0;
+    //}
 
     return 0;
 }
