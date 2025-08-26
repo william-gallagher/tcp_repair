@@ -37,7 +37,7 @@
 
 
 // TCP client side and file receiver
-void * recv_func(void *args)
+void recv_func(void *args)
 {
     char *dst_file = (char *) args;
 
@@ -45,7 +45,7 @@ void * recv_func(void *args)
     int recv_sock = socket(AF_INET, SOCK_STREAM, 0);
     if (recv_sock < 0) {
         print_error("socket()");
-        pthread_exit(NULL);
+        return;
     }
 
     // allow reuse
@@ -53,7 +53,7 @@ void * recv_func(void *args)
     int rc = setsockopt(recv_sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
     if (rc < 0) {
         print_error("setsockopt()");
-        pthread_exit(NULL);
+        return;
     }
 
     // Connect out
@@ -69,7 +69,7 @@ void * recv_func(void *args)
         if (rc < 0) {
             if (errno != ECONNREFUSED) {
                 print_error("connect()");
-                pthread_exit(NULL);
+                return;
             }
         } else {
             // Connected Successfully
@@ -80,7 +80,7 @@ void * recv_func(void *args)
     FILE *write_fp = fopen(dst_file, "w");
     if (!write_fp) {
         print_error("fopen()")
-        pthread_exit(NULL);
+        return;
     }
 
     char recv_buf[100];
@@ -90,7 +90,7 @@ void * recv_func(void *args)
         ssize_t bytes = read(recv_sock, recv_buf, sizeof(recv_buf));
         if (bytes < 0) {
             print_error("read()");
-            pthread_exit(NULL);
+            return;
         } else if (bytes == 0) {
             break;
         } else {
@@ -100,24 +100,11 @@ void * recv_func(void *args)
 
     fclose(write_fp);
     close(recv_sock);
-    pthread_exit(NULL);
+    return;
 }
 int main()
 {
     char *dst_file = "destination.txt";
-
-    pthread_t recv;
-    int rc = pthread_create(&recv, NULL, recv_func, dst_file);
-    if (rc != 0) {
-        print_error("pthread_create");
-        return 0;
-    }
-
-    rc = pthread_join(recv, NULL);
-    if (rc != 0) {
-        print_error("pthread_join(): recv thread");
-        return 0;
-    }
-
+    recv_func(dst_file);
     return 0;
 }
