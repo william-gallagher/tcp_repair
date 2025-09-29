@@ -19,10 +19,8 @@
 #include <sys/file.h>
 
 // TCP client side and file receiver
-void recv_func(void *args)
+void recv_func(const char *dst_file)
 {
-    char *dst_file = (char *) args;
-
     // create the socket
     int recv_sock = socket(AF_INET, SOCK_STREAM, 0);
     if (recv_sock < 0) {
@@ -84,6 +82,7 @@ void recv_func(void *args)
     close(recv_sock);
     return;
 }
+
 int main()
 {
     char *dst_file = "destination.txt";

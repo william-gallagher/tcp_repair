@@ -3,7 +3,7 @@
 
 #define IP_ADR_STR "127.0.0.1"
 #define PORT 7777
-#define FILE_SZ 100000
+#define FILE_SIZE 100000
 
 #define print_error(operation) {                             \
     char err_buf[100] = {0};                                 \

@@ -1,0 +1,10 @@
+two sending processes
+coordinate with file lock
+data shared in shared memory
+
+approach:
+1. move from pthread mutex lock to flock
+2. move sharing data in shared memory
+3. split threads into separate processes
+
+4. write up the approach for blog post
